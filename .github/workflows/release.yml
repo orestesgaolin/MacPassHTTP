@@ -198,6 +198,7 @@ jobs:
             SKIP_INSTALL=YES \
             MACOSX_DEPLOYMENT_TARGET=11.0 \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES \
             -derivedDataPath ./build
 
           # Verify universal binary

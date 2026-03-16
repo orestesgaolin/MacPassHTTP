@@ -208,10 +208,16 @@ jobs:
       - name: Package Plugin
         run: |
           VERSION="${GITHUB_REF_NAME:-0.0.0}"
-          cd ./build/Build/Products/Release/
-          zip -9ry "MacPassHTTP-${VERSION}.mpplugin.zip" MacPassHTTP.mpplugin
-          echo "PLUGIN_ZIP=$(pwd)/MacPassHTTP-${VERSION}.mpplugin.zip" >> "$GITHUB_ENV"
+          # Resolve symlinks - the Products/Release path may contain symlinks
+          PLUGIN_SRC="$(readlink -f ./build/Build/Products/Release/MacPassHTTP.mpplugin || echo ./build/Build/Products/Release/MacPassHTTP.mpplugin)"
+          OUTDIR="$(pwd)/artifacts"
+          mkdir -p "$OUTDIR"
+          # Use ditto to create zip, which properly handles macOS bundles and resolves symlinks
+          ditto -c -k --sequesterRsrc --keepParent "$PLUGIN_SRC" "$OUTDIR/MacPassHTTP-${VERSION}.mpplugin.zip"
+          echo "PLUGIN_ZIP=$OUTDIR/MacPassHTTP-${VERSION}.mpplugin.zip" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          # Verify zip is not empty
+          ls -la "$OUTDIR/MacPassHTTP-${VERSION}.mpplugin.zip"
 
       # ── Upload Artifact ─────────────────────────────────────────
       - name: Upload Build Artifact

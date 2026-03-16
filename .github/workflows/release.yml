@@ -1,0 +1,231 @@
+name: Release MacPassHTTP Plugin
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+      - "*.*.*-*"
+  workflow_dispatch:
+
+env:
+  SCHEME: MacPassHTTP
+  PROJECT: MacPassHTTP.xcodeproj
+  CONFIGURATION: Release
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: write
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────
+      - name: Checkout MacPassHTTP
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Clone MacPass (for headers) ─────────────────────────────
+      - name: Clone MacPass
+        run: |
+          git clone --depth=50 https://github.com/orestesgaolin/MacPass.git ../MacPass
+
+      # ── Dependencies ────────────────────────────────────────────
+      - name: Setup Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Install Carthage
+        run: brew install carthage
+
+      # ── Bootstrap MacPass Dependencies (for headers) ────────────
+      - name: Bootstrap MacPass Dependencies
+        env:
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd ../MacPass
+          carthage bootstrap --no-build
+
+      - name: Build MacPass Frameworks
+        run: |
+          set -euo pipefail
+          cd ../MacPass
+          mkdir -p Carthage/Build/Mac
+
+          # Download Sparkle binary
+          SPARKLE_VERSION=$(grep -i sparkle Cartfile.resolved | grep -oE '"[0-9][^"]*"' | tail -1 | tr -d '"')
+          echo "Downloading Sparkle $SPARKLE_VERSION..."
+          curl -sSL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" -o /tmp/Sparkle.tar.xz
+          mkdir -p /tmp/Sparkle && tar xf /tmp/Sparkle.tar.xz -C /tmp/Sparkle
+          cp -R /tmp/Sparkle/Sparkle.framework Carthage/Build/Mac/
+
+          echo "::group::Building HNHUi"
+          xcodebuild build \
+            -project Carthage/Checkouts/HNHUi/HNHUi.xcodeproj \
+            -scheme HNHUi \
+            -configuration Release \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            SYMROOT=/tmp/HNHUi-build OBJROOT=/tmp/HNHUi-obj
+          cp -R /tmp/HNHUi-build/Release/HNHUi.framework Carthage/Build/Mac/
+          echo "::endgroup::"
+
+          echo "::group::Building KissXML"
+          xcodebuild build \
+            -project Carthage/Checkouts/KissXML/KissXML.xcodeproj \
+            -scheme "KissXML (macOS)" \
+            -configuration Release \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            SYMROOT=/tmp/KissXML-build OBJROOT=/tmp/KissXML-obj
+          cp -R /tmp/KissXML-build/Release/KissXML.framework Carthage/Build/Mac/
+          echo "::endgroup::"
+
+          echo "::group::Building KeePassKit"
+          mkdir -p Carthage/Checkouts/KeePassKit/Carthage/Build/Mac
+          ln -sf "$(pwd)/Carthage/Build/Mac/KissXML.framework" \
+            Carthage/Checkouts/KeePassKit/Carthage/Build/Mac/KissXML.framework
+          xcodebuild build \
+            -project Carthage/Checkouts/KeePassKit/KeePassKit.xcodeproj \
+            -target "KeePassKit macOS" \
+            -configuration Release \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            SYMROOT=/tmp/KeePassKit-build OBJROOT=/tmp/KeePassKit-obj
+          cp -R /tmp/KeePassKit-build/Release/KeePassKit.framework Carthage/Build/Mac/
+          echo "::endgroup::"
+
+          echo "::group::Building TransformerKit"
+          # Fix @import compatibility for Xcode 15+
+          if [ -f scripts/fix_transformerkit.sh ]; then
+            chmod +x scripts/fix_transformerkit.sh
+            ./scripts/fix_transformerkit.sh
+          fi
+          xcodebuild build \
+            -workspace Carthage/Checkouts/TransformerKit/TransformerKit.xcworkspace \
+            -scheme "TransformerKit macOS" \
+            -configuration Release \
+            -derivedDataPath /tmp/TransformerKit-build \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+          cp -R /tmp/TransformerKit-build/Build/Products/Release/TransformerKit.framework \
+            Carthage/Build/Mac/
+          echo "::endgroup::"
+
+      # ── Bootstrap MacPassHTTP Dependencies ──────────────────────
+      - name: Bootstrap MacPassHTTP Dependencies
+        env:
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          carthage bootstrap --no-build
+
+      - name: Build MacPassHTTP Dependencies
+        run: |
+          set -euo pipefail
+          mkdir -p Carthage/Build/Mac
+
+          echo "::group::Building GCDWebServers"
+          xcodebuild build \
+            -project Carthage/Checkouts/GCDWebServer/GCDWebServer.xcodeproj \
+            -scheme "GCDWebServers (Mac)" \
+            -configuration Release \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            MACOSX_DEPLOYMENT_TARGET=11.0 \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            SYMROOT=/tmp/GCDWebServers-build OBJROOT=/tmp/GCDWebServers-obj
+          cp -R /tmp/GCDWebServers-build/Release/GCDWebServers.framework Carthage/Build/Mac/
+          echo "::endgroup::"
+
+          echo "::group::Building JSONModel"
+          xcodebuild build \
+            -project Carthage/Checkouts/jsonmodel/jsonmodel.xcodeproj \
+            -scheme "JSONModel-mac" \
+            -configuration Release \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            MACOSX_DEPLOYMENT_TARGET=11.0 \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            SYMROOT=/tmp/jsonmodel-build OBJROOT=/tmp/jsonmodel-obj
+          cp -R /tmp/jsonmodel-build/Release/JSONModel.framework Carthage/Build/Mac/
+          echo "::endgroup::"
+
+          echo "::group::Building KeePassHTTPKit"
+          mkdir -p Carthage/Checkouts/KeePassHTTPKit/Carthage/Build/Mac
+          ln -sf "$(pwd)/Carthage/Build/Mac/GCDWebServers.framework" \
+            Carthage/Checkouts/KeePassHTTPKit/Carthage/Build/Mac/GCDWebServers.framework
+          ln -sf "$(pwd)/Carthage/Build/Mac/JSONModel.framework" \
+            Carthage/Checkouts/KeePassHTTPKit/Carthage/Build/Mac/JSONModel.framework
+          xcodebuild build \
+            -project Carthage/Checkouts/KeePassHTTPKit/KeePassHTTPKit.xcodeproj \
+            -scheme "KeePassHTTPKit" \
+            -configuration Release \
+            ARCHS="arm64 x86_64" SDKROOT=macosx \
+            MACOSX_DEPLOYMENT_TARGET=11.0 \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            SYMROOT=/tmp/KeePassHTTPKit-build OBJROOT=/tmp/KeePassHTTPKit-obj
+          cp -R /tmp/KeePassHTTPKit-build/Release/KeePassHTTPKit.framework Carthage/Build/Mac/
+          echo "::endgroup::"
+
+          # Symlink MacPass frameworks needed at compile time
+          for fw in HNHUi KeePassKit KissXML Sparkle TransformerKit; do
+            ln -sf "$(pwd)/../MacPass/Carthage/Build/Mac/$fw.framework" \
+              "Carthage/Build/Mac/$fw.framework"
+          done
+
+          # Verify all required frameworks
+          echo "Checking frameworks..."
+          for fw in KeePassHTTPKit GCDWebServers JSONModel HNHUi KeePassKit; do
+            if [ ! -d "Carthage/Build/Mac/$fw.framework" ]; then
+              echo "Missing $fw.framework"
+              ls -la Carthage/Build/Mac/ || true
+              exit 1
+            fi
+            echo "  $fw.framework OK"
+          done
+
+      # ── Build Plugin ────────────────────────────────────────────
+      - name: Build MacPassHTTP Plugin
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME:-0.0.0}"
+
+          xcodebuild clean build \
+            -configuration Release \
+            -project $PROJECT \
+            -scheme $SCHEME \
+            ARCHS="arm64 x86_64" \
+            CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            SKIP_INSTALL=YES \
+            MACOSX_DEPLOYMENT_TARGET=11.0 \
+            GCC_TREAT_WARNINGS_AS_ERRORS=NO \
+            -derivedDataPath ./build
+
+          # Verify universal binary
+          lipo -info build/Build/Products/Release/MacPassHTTP.mpplugin/Contents/MacOS/MacPassHTTP
+
+      # ── Package ─────────────────────────────────────────────────
+      - name: Package Plugin
+        run: |
+          VERSION="${GITHUB_REF_NAME:-0.0.0}"
+          cd ./build/Build/Products/Release/
+          zip -9ry "MacPassHTTP-${VERSION}.mpplugin.zip" MacPassHTTP.mpplugin
+          echo "PLUGIN_ZIP=$(pwd)/MacPassHTTP-${VERSION}.mpplugin.zip" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # ── Upload Artifact ─────────────────────────────────────────
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MacPassHTTP-${{ env.VERSION }}.mpplugin.zip
+          path: ${{ env.PLUGIN_ZIP }}
+
+      # ── GitHub Release ──────────────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "MacPassHTTP ${{ env.VERSION }} (Alternative)" \
+            --generate-notes \
+            "${{ env.PLUGIN_ZIP }}"

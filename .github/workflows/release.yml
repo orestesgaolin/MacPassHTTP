@@ -199,10 +199,21 @@ jobs:
             MACOSX_DEPLOYMENT_TARGET=11.0 \
             GCC_TREAT_WARNINGS_AS_ERRORS=NO \
             CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES \
+            CURRENT_PROJECT_VERSION="$VERSION" \
             -derivedDataPath ./build
+
+          # Stamp version into the built bundle's Info.plist
+          PLUGIN_PLIST="$(readlink -f ./build/Build/Products/Release/MacPassHTTP.mpplugin || echo ./build/Build/Products/Release/MacPassHTTP.mpplugin)/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLUGIN_PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$PLUGIN_PLIST"
 
           # Verify universal binary
           lipo -info build/Build/Products/Release/MacPassHTTP.mpplugin/Contents/MacOS/MacPassHTTP
+
+          # Print version info for debugging
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLUGIN_PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLUGIN_PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLUGIN_PLIST"
 
       # ── Package ─────────────────────────────────────────────────
       - name: Package Plugin
@@ -213,17 +224,18 @@ jobs:
           OUTDIR="$(pwd)/artifacts"
           mkdir -p "$OUTDIR"
           # Use ditto to create zip, which properly handles macOS bundles and resolves symlinks
-          ditto -c -k --sequesterRsrc --keepParent "$PLUGIN_SRC" "$OUTDIR/MacPassHTTP-${VERSION}.mpplugin.zip"
-          echo "PLUGIN_ZIP=$OUTDIR/MacPassHTTP-${VERSION}.mpplugin.zip" >> "$GITHUB_ENV"
+          # Use stable filename so the download URL in plugins.json doesn't need updating per release
+          ditto -c -k --sequesterRsrc --keepParent "$PLUGIN_SRC" "$OUTDIR/MacPassHTTP.mpplugin.zip"
+          echo "PLUGIN_ZIP=$OUTDIR/MacPassHTTP.mpplugin.zip" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           # Verify zip is not empty
-          ls -la "$OUTDIR/MacPassHTTP-${VERSION}.mpplugin.zip"
+          ls -la "$OUTDIR/MacPassHTTP.mpplugin.zip"
 
       # ── Upload Artifact ─────────────────────────────────────────
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MacPassHTTP-${{ env.VERSION }}.mpplugin.zip
+          name: MacPassHTTP.mpplugin.zip
           path: ${{ env.PLUGIN_ZIP }}
 
       # ── GitHub Release ──────────────────────────────────────────
